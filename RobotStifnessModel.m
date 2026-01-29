@@ -52,6 +52,7 @@ Ixz = [ 0 0 0 0 0 0 ];
 Iyz = [ 0 0 0 0 0 0 ];
 
 Ks = diag([20e6 20e6 20e6 50e4 50e4 20e4]);
+Cs= diag ([20e2 20e2 20e2 50e2 50e2 20e2]);
 g  = 9.81;
 
 %% =========================================================================
@@ -59,6 +60,8 @@ g  = 9.81;
 %% =========================================================================
 N = size(Angcord,1);
 wn = zeros(N,n);
+wd   = zeros(N,n);   % [rad/s] Dampened frecuencies
+zeta = zeros(N,n);   % [-]     Dampened factor
 
 eps = 1e-5;
 
@@ -84,26 +87,96 @@ for p = 1:N
 
     Kt = Ks + Kg;
 
+
+
     % --- Modal problem ---
     [~,W2] = eig(Kt,D);
     wn(p,:) = sqrt(real(diag(W2)))';
 
+    % ============================
+% Estado-espacio amortiguado
+% ============================
+Z = zeros(n);
+I = eye(n);
+
+A = [ Z         I ;
+     -D\Kt    -D\Cs ];
+
+lam_all = eig(A);
+
+% 1) Candidatos complejos (solo una mitad del par conjugado)
+lam_c = lam_all(imag(lam_all) > 0);
+
+% 2) Si faltan modos (polos reales), completamos con reales
+if numel(lam_c) < n
+    lam_r = lam_all(abs(imag(lam_all)) < 1e-12);   % reales
+    % ordenarlos por |real| (los más “lentos” primero o como prefieras)
+    [~,idxr] = sort(abs(real(lam_r)), 'ascend');
+    lam_r = lam_r(idxr);
+    lam_sel = [lam_c; lam_r(1:min(n-numel(lam_c), numel(lam_r)))];
+else
+    % si sobran complejos, elegir los n con mayor frecuencia (|imag|)
+    [~,idxc] = sort(abs(imag(lam_c)), 'descend');
+    lam_sel = lam_c(idxc(1:n));
+end
+
+% asegurar tamaño n
+lam_sel = lam_sel(:).';
+if numel(lam_sel) < n
+    lam_sel(end+1:n) = 0;
+end
+
+wd(p,:)   = abs(imag(lam_sel));                          % [rad/s]
+zeta(p,:) = -real(lam_sel) ./ sqrt(real(lam_sel).^2 + imag(lam_sel).^2);  % [-]
+              % [-]
+
 end
 
 %% =========================================================================
-%% Plot
+%% Plot wn (no amortiguadas)
 %% =========================================================================
 figure; hold on;
 colors = lines(6);
 for i=1:6
-    plot(xpos(:),wn(:,i),'LineWidth',2,'Color',colors(i,:));
+    plot(xpos(:), wn(:,i), 'LineWidth', 2, 'Color', colors(i,:));
 end
-    plot(xpos(:), Toolw*ones(size(xpos(:))), 'k--', 'LineWidth', 2);
+plot(xpos(:), Toolw*ones(size(xpos(:))), 'k--', 'LineWidth', 2);
 
 xlabel('X (m)');
 ylabel('\omega_n  [rad/s]');
-title('Natural frequencies along trajectory (industrial numeric model)');
+title('Natural frequencies (undamped)');
 legend('Mode 1','Mode 2','Mode 3','Mode 4','Mode 5','Mode 6','Tool line');
+grid on;
+
+%% =========================================================================
+%% Plot wd (amortiguadas)
+%% =========================================================================
+figure; hold on;
+colors = lines(6);
+for i=1:6
+    plot(xpos(:), wd(:,i), 'LineWidth', 2, 'Color', colors(i,:));
+end
+plot(xpos(:), Toolw*ones(size(xpos(:))), 'k--', 'LineWidth', 2);
+
+xlabel('X (m)');
+ylabel('\omega_d  [rad/s]');
+title('Damped natural frequencies');
+legend('Mode 1','Mode 2','Mode 3','Mode 4','Mode 5','Mode 6','Tool line');
+grid on;
+
+%% =========================================================================
+%% Damped factor
+%% =========================================================================
+
+figure; hold on;
+colors = lines(6);
+for i=1:6
+    plot(xpos(:), zeta(:,i), 'LineWidth', 2, 'Color', colors(i,:));
+end
+xlabel('X (m)');
+ylabel('\zeta [-]');
+title('Modal damping ratio along trajectory');
+legend('Mode 1','Mode 2','Mode 3','Mode 4','Mode 5','Mode 6');
 grid on;
 
 end

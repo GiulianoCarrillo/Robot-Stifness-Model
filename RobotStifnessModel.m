@@ -52,7 +52,7 @@ Ixz = [ 0 0 0 0 0 0 ];
 Iyz = [ 0 0 0 0 0 0 ];
 
 Ks = diag([20e6 20e6 20e6 50e4 50e4 20e4]);
-Cs= diag ([20e2 20e2 20e2 50e2 50e2 20e2]);
+Cs = diag([2e1 2e1 2e1 5e1 5e1 2e1]);   % [N*m*s/rad]
 g  = 9.81;
 
 %% =========================================================================
@@ -62,6 +62,8 @@ N = size(Angcord,1);
 wn = zeros(N,n);
 wd   = zeros(N,n);   % [rad/s] Dampened frecuencies
 zeta = zeros(N,n);   % [-]     Dampened factor
+Phi_all = cell(N,1);   % para guardar modos (phi) en cada postura
+phi_prev = [];         % para tracking
 
 eps = 1e-5;
 
@@ -88,49 +90,150 @@ for p = 1:N
     Kt = Ks + Kg;
 
 
+    % --- Modal problem (eig + mode tracking with MAC) ---
+% --- Modal problem (eig + mode tracking with MAC) ---
+[phi, W2] = eig(Kt, D);
+wn_tmp = sqrt(real(diag(W2)));   % n×1
 
-    % --- Modal problem ---
-    [~,W2] = eig(Kt,D);
-    wn(p,:) = sqrt(real(diag(W2)))';
+% Normalizar modos (para comparar bien)
+for k = 1:n
+    phi(:,k) = phi(:,k) / norm(phi(:,k));
+end
+
+if p == 1
+    perm = 1:n;
+else
+    % similitud tipo MAC simplificado
+    S = abs(phi_prev.' * phi);   % n×n
+
+    % matching greedy
+    perm = zeros(1,n);
+    used = false(1,n);
+    for i = 1:n
+        [~, idx] = sort(S(i,:), 'descend');
+        for kk = 1:n
+            j = idx(kk);
+            if ~used(j)
+                perm(i) = j;
+                used(j) = true;
+                break;
+            end
+        end
+    end
+end
+
+% Reordenar por tracking
+phi    = phi(:,perm);
+wn_tmp = wn_tmp(perm);
+
+% Guardar
+wn(p,:) = wn_tmp.';
+Phi_all{p} = phi;      % <<< ESTA LÍNEA ES CLAVE PARA EL MAC
+phi_prev = phi;        % actualizar referencia
+
+% Normalizar modos (para comparar bien)
+for k = 1:n
+    phi(:,k) = phi(:,k) / norm(phi(:,k));
+end
+
+if p == 1
+    % primer punto: acepto el orden que viene
+    perm = 1:n;
+else
+    % MAC simplificado: similitud entre modos previos y actuales
+    S = abs(phi_prev.' * phi);   % n×n
+
+    % Matching greedy (mínimo cambio)
+    perm = zeros(1,n);
+    used = false(1,n);
+
+    for i = 1:n
+        [~, idx] = sort(S(i,:), 'descend');
+        for kk = 1:n
+            j = idx(kk);
+            if ~used(j)
+                perm(i) = j;
+                used(j) = true;
+                break;
+            end
+        end
+    end
+end
+
+% Reordenar según perm
+phi = phi(:,perm);
+wn_tmp = wn_tmp(perm);
+
+% Guardar
+wn(p,:) = wn_tmp.';
+phi_prev = phi;
 
     % ============================
-% Estado-espacio amortiguado
-% ============================
-Z = zeros(n);
-I = eye(n);
+    % Estado-espacio amortiguado
+    % ============================
+    Z = zeros(n);
+    I = eye(n);
 
-A = [ Z         I ;
+    A = [ Z         I ;
      -D\Kt    -D\Cs ];
 
-lam_all = eig(A);
+    lam_all = eig(A);
 
-% 1) Candidatos complejos (solo una mitad del par conjugado)
-lam_c = lam_all(imag(lam_all) > 0);
+    % 1) Candidatos complejos (solo una mitad del par conjugado)
+    lam_c = lam_all(imag(lam_all) > 0);
 
-% 2) Si faltan modos (polos reales), completamos con reales
-if numel(lam_c) < n
+    % 2) Si faltan modos (polos reales), completamos con reales
+    if numel(lam_c) < n
     lam_r = lam_all(abs(imag(lam_all)) < 1e-12);   % reales
-    % ordenarlos por |real| (los más “lentos” primero o como prefieras)
+    % ordenarlos
     [~,idxr] = sort(abs(real(lam_r)), 'ascend');
     lam_r = lam_r(idxr);
     lam_sel = [lam_c; lam_r(1:min(n-numel(lam_c), numel(lam_r)))];
-else
+    else
     % si sobran complejos, elegir los n con mayor frecuencia (|imag|)
     [~,idxc] = sort(abs(imag(lam_c)), 'descend');
     lam_sel = lam_c(idxc(1:n));
 end
 
-% asegurar tamaño n
-lam_sel = lam_sel(:).';
-if numel(lam_sel) < n
+    % asegurar tamaño n
+    lam_sel = lam_sel(:).';
+    if numel(lam_sel) < n
     lam_sel(end+1:n) = 0;
 end
 
-wd(p,:)   = abs(imag(lam_sel));                          % [rad/s]
-zeta(p,:) = -real(lam_sel) ./ sqrt(real(lam_sel).^2 + imag(lam_sel).^2);  % [-]
+    wd(p,:)   = abs(imag(lam_sel));                          % [rad/s]
+    zeta(p,:) = -real(lam_sel) ./ sqrt(real(lam_sel).^2 + imag(lam_sel).^2);  % [-]
               % [-]
 
 end
+
+%% =========================================================================
+%% MAC continuity plot (between consecutive points)
+%% =========================================================================
+MAC = zeros(N-1, n);
+
+for p = 2:N
+    Phi_prev = Phi_all{p-1};
+    Phi_cur  = Phi_all{p};
+
+    for k = 1:n
+        num = abs(Phi_prev(:,k).' * Phi_cur(:,k))^2;
+        den = (Phi_prev(:,k).' * Phi_prev(:,k)) * (Phi_cur(:,k).' * Phi_cur(:,k));
+        MAC(p-1,k) = num / den;   % 0..1
+    end
+end
+
+figure; hold on;
+colors = lines(n);
+for k = 1:n
+    plot(xpos(2:end), MAC(:,k), 'LineWidth', 2, 'Color', colors(k,:));
+end
+xlabel('X (m)');
+ylabel('MAC [-]');
+title('MAC continuity between consecutive points');
+legend('Mode 1','Mode 2','Mode 3','Mode 4','Mode 5','Mode 6');
+grid on;
+ylim([0 1.05]);
 
 %% =========================================================================
 %% Plot wn (no amortiguadas)

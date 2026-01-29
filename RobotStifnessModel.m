@@ -294,6 +294,14 @@ figure; plot(xpos, Kg_sens, 'LineWidth', 2); grid on;
 xlabel('X (m)'); ylabel('Kg sensitivity metric [-]');
 title('Kg sensitivity to eps (compare eps and 10*eps)');
 
+%% =========================================================================
+%% Visualización de modos
+%% =========================================================================
+p_vis  = 5;     % postura
+scale  = 0.6;   % exageración modal
+
+plotModalShapes(Angcord, Phi_all, a, d, alpha, p_vis, scale)
+
 end
 
 %% =========================================================================

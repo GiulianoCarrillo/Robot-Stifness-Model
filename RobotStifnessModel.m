@@ -19,6 +19,11 @@ Angcord1 = [ ...
 
 xpos = [ 2.6 2.4 2.2 2.0 1.8 1.6 1.4 1.2 1.0 0.8 ].';   % [m]
 
+%% Modification in angles to match with KUKA convention.
+
+Angcord1(:,2)=-Angcord1(:,2)
+Angcord1(:,3)=Angcord1(:,3)+180
+
 Angcord = deg2rad(Angcord1);
 n = 6;
 
@@ -32,7 +37,9 @@ Toolw = RPM*(2*pi/60)*z_teeth;    % [rad/s] tooth passing frequency
 
 a     = [0.33 1.15 0.115 0 0 0];             % [m]
 d     = [0.645 0 0 1.22 0 0.24];             % [m]
-alpha = [pi/2 0 -pi/2 pi/2 -pi/2 0];         % [rad]
+alpha = [pi/2 0 pi/2 pi/2 -pi/2 0];         % [rad]
+
+
 
 lc    = [0.35 0.60 0.55 0.15 0.12 0.20];     % [m]
 lc_y  = [0.00 0.00 0.00 0.00 0.00 0.00];     % [m]
@@ -48,8 +55,8 @@ Ixy = [ 0 0 0 0 0 0 ];  % [kg*m^2]
 Ixz = [ 0 0 0 0 0 0 ];  % [kg*m^2]
 Iyz = [ 0 0 0 0 0 0 ];  % [kg*m^2]
 
-Ks = diag([20e6 20e6 20e6 50e4 50e4 20e4]);    % [N*m/rad]
-Cs = diag([2e1  2e1  2e1  5e1  5e1  2e1 ]);     % [N*m*s/rad]
+Ks = diag([40e7 40e7 40e6 50e4 50e4 40e4]);    % [N*m/rad]
+Cs = diag([2e1  2e2  2e1  5e1  5e1  2e1 ]);     % [N*m*s/rad]
 g  = 9.81;                                       % [m/s^2]
 
 %% =========================================================================
@@ -436,4 +443,5 @@ end
 [~,idx] = max(score);
 perm = P(idx,:);
 end
+
 

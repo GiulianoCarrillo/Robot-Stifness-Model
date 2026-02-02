@@ -2,55 +2,50 @@ function plotModalShapes(Angcord, Phi_all, a, d, alpha, p, scale)
 % =========================================================================
 % plotModalShapes
 %
-% Visualiza los modos de vibración de un robot serial (stick model)
-% usando perturbaciones articulares:
-%
 %   q_def = q0 + scale * Phi(:,k)
 %
 % INPUTS:
-%   Angcord : [N x 6] matriz de posturas (rad)
-%   Phi_all : cell{N} con matrices de modos [6 x 6]
-%   a,d,alpha : parámetros DH
-%   p      : índice de postura a visualizar
-%   scale  : factor de exageración modal (rad)
+%   Angcord : [N x 6] posture matrix (rad)
+%   Phi_all : cell{N} Matrix modes [6 x 6]
+%   a,d,alpha : DH parameters
+%   p      : Index of the posture to visualize
 %
 % =========================================================================
 
-close all;
 
-q0  = Angcord(p,:)';     % postura nominal
-Phi = Phi_all{p};        % modos en esa postura
+q0  = Angcord(p,:)';     % Nominal posture
+Phi = Phi_all{p};        % Modes in the indicated posture
 n   = length(q0);
 
 for k = 1:n
 
-    % Postura deformada según el modo k
+    % Deformated posture from mode k
     q_def = q0 + scale * Phi(:,k);
 
     figure('Color','w'); hold on;
     axis equal; grid on;
     view(3);
 
-    % Robot nominal
+    % Nominal posture of the robot
     plot_robot(q0, a, d, alpha, 'k-o', 2);
 
-    % Robot deformado
+    % Robot after deformation.
     plot_robot(q_def, a, d, alpha, 'r-o', 2);
 
-    title(sprintf('Modo %d – postura %d (escala %.2f)', k, p, scale), ...
+    title(sprintf('Mode %d – Posture %d (scale %.2f)', k, p, scale), ...
           'FontSize', 12);
 
     xlabel('X [m]');
     ylabel('Y [m]');
     zlabel('Z [m]');
 
-    legend('Robot nominal','Modo deformado', 'Location','best');
+    legend('Nomimnal Robot','Robot after deformation', 'Location','best');
 
 end
 
 end
 function plot_robot(q, a, d, alpha, style, lw)
-% Dibuja el robot como barras entre articulaciones
+% Draw the robot with lines between articulations.
 
 n = length(q);
 T = eye(4);

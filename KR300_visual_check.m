@@ -17,6 +17,10 @@ q = [0 -pi/2 pi/2 0 0 0];   % cambiar para testear
 %% All expressed in LOCAL frames
 %% =============================
 
+%% =============================
+%% Forward kinematics
+%% =============================
+
 % Base → A1
 T01 = transl(0.330, 0, 0.645)*rotx(pi/2);
 

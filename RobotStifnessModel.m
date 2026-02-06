@@ -1,6 +1,9 @@
 function RobotStifnessModel()
 
+
+
 clear; clc;
+pkg load control
 
 %% =============================================================================
 %% ------------------ Parameters -----------------------------------------------
@@ -308,6 +311,12 @@ p_vis  = 5;     % postura
 scale  = 0.6;   % exageración modal
 
 plotModalShapes(Angcord, Phi_all, a, d, alpha, p_vis, scale)
+
+%% =========================================================================
+%% Plot FRF magnitude
+%% =========================================================================
+
+plotFRF(wn,zeta,m,xpos);
 
 end
 

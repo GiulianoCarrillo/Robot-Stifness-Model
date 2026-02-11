@@ -23,6 +23,9 @@ function plotFRF(wn,zeta,m,xpos);
 % Define transfer function variable:
 s = tf('s');
 
+% Define freq. upper limit:
+ymax = ceil(max(max(wn))/100)*100+100;
+
 % Calculate magnitude of FRF (total and individual modes):
 for i = 1:length(xpos)
     k1 = wn(i,1)^2*m(1);
@@ -73,7 +76,7 @@ plot3(xtot(:,6),w_tot(:,6),mag_tot(:,6),'color','blue');
 plot3(xtot(:,7),w_tot(:,7),mag_tot(:,7),'color','blue');
 plot3(xtot(:,8),w_tot(:,8),mag_tot(:,8),'color','blue');
 plot3(xtot(:,9),w_tot(:,9),mag_tot(:,9),'color','blue');
-ylim([0 5000]);
+ylim([0 ymax]);
 %zlim([0 0.0005]);
 xlabel('x [m]');
 ylabel('\omega [rad/s]');
@@ -93,7 +96,7 @@ plot3(xtot(:,6),w_tot(:,6),mag_tot(:,6),'color','blue');
 plot3(xtot(:,7),w_tot(:,7),mag_tot(:,7),'color','blue');
 plot3(xtot(:,8),w_tot(:,8),mag_tot(:,8),'color','blue');
 plot3(xtot(:,9),w_tot(:,9),mag_tot(:,9),'color','blue');
-ylim([0 5000]);
+ylim([0 ymax]);
 zlim([0 0.000003]);
 xlabel('x [m]');
 ylabel('\omega [rad/s]');
@@ -116,7 +119,7 @@ for i = 1:length(xpos)
   plot3(x5(:,i),w5(:,i),mag5(:,i),'color','cyan');
   plot3(x6(:,i),w6(:,i),mag6(:,i),'color','yellow');
 end
-ylim([0 5000]);
+ylim([0 ymax]);
 xlabel('x [m]');
 ylabel('\omega [rad/s]');
 zlabel('Magnitude dB');
@@ -142,7 +145,7 @@ for i = 1:length(xpos)
   plot3(x5(:,i),w5(:,i),norm5,'color','cyan');
   plot3(x6(:,i),w6(:,i),norm6,'color','yellow');
 end
-ylim([0 5000]);
+ylim([0 ymax]);
 xlabel('x [m]');
 ylabel('\omega [rad/s]');
 zlabel('Normalized Magnitude');

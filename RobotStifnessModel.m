@@ -71,6 +71,18 @@ wn   = zeros(N,n);   % [rad/s]
 wd   = zeros(N,n);   % [rad/s]
 zeta = zeros(N,n);   % [-]
 
+DomModeX = zeros(N,1);
+DomModeY = zeros(N,1);
+
+wn_domX = zeros(N,1);
+wn_domY = zeros(N,1);
+
+zeta_domX = zeros(N,1);
+zeta_domY = zeros(N,1);
+
+k_modal_X = zeros(N,1);
+k_modal_Y = zeros(N,1);
+
 Phi_all = cell(N,1);     % store tracked mode shapes
 S_all   = cell(N-1,1);   % store MAC matrices between consecutive points
 phi_prev = [];
@@ -84,6 +96,8 @@ minEigD  = zeros(N,1);
 condD    = zeros(N,1);
 Pgrav    = zeros(N,1);
 Kg_sens  = zeros(N,1);  % simple sensitivity metric
+Kx_static = zeros(N,1);
+Ky_static = zeros(N,1);
 
 for p = 1:N
 
@@ -108,9 +122,13 @@ for p = 1:N
     [phi, W2] = eig(Kt, D);
     wn_tmp = sqrt(real(diag(W2)));   % n×1
 
+    % --- Sort modes by increasing natural frequency (important!) ---
+    [wn_tmp, idx_sort] = sort(wn_tmp, 'ascend');
+    phi = phi(:, idx_sort);
+
     % Normalize modes (for MAC comparison)
     for k = 1:n
-        phi(:,k) = phi(:,k) / norm(phi(:,k));
+        phi(:,k) = phi(:,k) / sqrt(phi(:,k)'*D*phi(:,k));
     end
 
     if p == 1
@@ -127,10 +145,29 @@ for p = 1:N
     phi    = phi(:,perm);
     wn_tmp = wn_tmp(perm);
 
+
+
+
+
+% ================================
+
     % Store
     wn(p,:) = wn_tmp.';
     Phi_all{p} = phi;
     phi_prev = phi;
+
+    % =========================================================
+    % STATIC CARTESIAN STIFFNESS CHECK
+    % =========================================================
+    J_static = jacobian_numeric(q0,a,d,alpha);
+    Jv_static = J_static(1:3,:);
+
+    Kcart_static = inv(Jv_static / Ks * Jv_static');
+
+    Kx_static(p) = Kcart_static(1,1);
+    Ky_static(p) = Kcart_static(2,2);
+
+
 
     % ============================
     % Damped state-space model
@@ -143,26 +180,59 @@ for p = 1:N
 
     lam_all = eig(A);
 
-    % Select one representative per mode:
-    lam_c = lam_all(imag(lam_all) > 0);
+% Select damped eigenvalue for each mode by matching imag(lambda) ~ wn_tmp(k)
+lam_c = lam_all(imag(lam_all) > 0);
+lam_sel = zeros(n,1);
 
-    if numel(lam_c) >= n
-        [~,idxc] = sort(abs(imag(lam_c)), 'descend');
-        lam_sel = lam_c(idxc(1:n));
-    else
-        lam_r = lam_all(abs(imag(lam_all)) < 1e-12);
-        [~,idxr] = sort(abs(real(lam_r)), 'ascend');
-        lam_r = lam_r(idxr);
-        need = min(n-numel(lam_c), numel(lam_r));
-        lam_sel = [lam_c; lam_r(1:need)];
-        if numel(lam_sel) < n
-            lam_sel(end+1:n,1) = 0;
-        end
-    end
+for k = 1:n
+    [~, idx_min] = min(abs(abs(imag(lam_c)) - wn_tmp(k)));
+    lam_sel(k) = lam_c(idx_min);
+end
 
-    lam_sel = lam_sel(:).';
-    wd(p,:)   = abs(imag(lam_sel));  % [rad/s]
-    zeta(p,:) = -real(lam_sel) ./ sqrt(real(lam_sel).^2 + imag(lam_sel).^2); % [-]
+
+lam_sel = lam_sel(:).';
+wd(p,:)   = abs(imag(lam_sel));  % [rad/s]
+zeta(p,:) = -real(lam_sel) ./ sqrt(real(lam_sel).^2 + imag(lam_sel).^2); % [-]
+zeta(p,:) = max(0, min(zeta(p,:), 0.99));
+% =========================================================
+% Dominant modal parameters for SLD (X and Y directions)
+% =========================================================
+
+J = jacobian_numeric(q0,a,d,alpha);
+Jv = J(1:3,:);
+
+PhiX = zeros(1,n);
+PhiY = zeros(1,n);
+WeightX = zeros(1,n);
+WeightY = zeros(1,n);
+
+for k = 1:n
+    phi_k = phi(:,k);
+    v_cart = Jv * phi_k;
+
+    PhiX(k) = v_cart(1);
+    PhiY(k) = v_cart(2);
+
+    WeightX(k) = (PhiX(k)^2) / (wn_tmp(k)^2);
+    WeightY(k) = (PhiY(k)^2) / (wn_tmp(k)^2);
+end
+
+[~, idxX] = max(WeightX);
+[~, idxY] = max(WeightY);
+
+DomModeX(p) = idxX;
+DomModeY(p) = idxY;
+
+wn_domX(p) = wn_tmp(idxX);
+wn_domY(p) = wn_tmp(idxY);
+
+zeta_domX(p) = zeta(p,idxX);
+zeta_domY(p) = zeta(p,idxY);
+
+k_modal_X(p) = wn_domX(p)^2 / (PhiX(idxX)^2);
+k_modal_Y(p) = wn_domY(p)^2 / (PhiY(idxY)^2);
+
+
 
     %% =====================================================================
     %% Consistency / sanity checks (stored + optional warnings)
@@ -203,6 +273,7 @@ for p = 1:N
     end
 
 end
+
 
 %% =========================================================================
 %% MAC plots
@@ -307,7 +378,7 @@ title('Kg sensitivity to eps (compare eps and 10*eps)');
 %% =========================================================================
 %% Visualización de modos
 %% =========================================================================
-p_vis  = 5;     % postura
+p_vis  = 1;     % postura
 scale  = 0.6;   % exageración modal
 
 plotModalShapes(Angcord, Phi_all, a, d, alpha, p_vis, scale)
@@ -317,6 +388,55 @@ plotModalShapes(Angcord, Phi_all, a, d, alpha, p_vis, scale)
 %% =========================================================================
 
 plotFRF(wn,zeta,m,xpos);
+
+%% =========================================================================
+%% Plot Cartesian influence of the modes of vibration
+%% =========================================================================
+
+figure;
+plot(xpos, DomModeX,'o-','LineWidth',2); hold on;
+plot(xpos, DomModeY,'s-','LineWidth',2);
+xlabel('X (m)');
+ylabel('Mode index');
+legend('X direction','Y direction');
+title('Dominant mode along trajectory');
+grid on;
+
+figure;
+plot(xpos, wn_domX,'LineWidth',2); hold on;
+plot(xpos, wn_domY,'LineWidth',2);
+xlabel('X (m)');
+ylabel('\omega_n [rad/s]');
+legend('X direction','Y direction');
+title('Dominant natural frequency');
+grid on;
+
+figure;
+plot(xpos, zeta_domX,'LineWidth',2); hold on;
+plot(xpos, zeta_domY,'LineWidth',2);
+xlabel('X (m)');
+ylabel('\zeta [-]');
+legend('X direction','Y direction');
+title('Dominant damping ratio');
+grid on;
+
+figure;
+plot(xpos, k_modal_X,'LineWidth',2); hold on;
+plot(xpos, k_modal_Y,'LineWidth',2);
+xlabel('X (m)');
+ylabel('k_{modal} [N/m]');
+legend('X direction','Y direction');
+title('Equivalent Cartesian modal stiffness');
+grid on;
+
+figure;
+plot(xpos, Kx_static,'LineWidth',2); hold on;
+plot(xpos, Ky_static,'LineWidth',2);
+xlabel('X (m)');
+ylabel('Static Cartesian stiffness [N/m]');
+legend('X static','Y static');
+title('Static stiffness check');
+grid on;
 
 end
 
@@ -451,6 +571,41 @@ end
 
 [~,idx] = max(score);
 perm = P(idx,:);
+end
+
+
+%% =========================================================================
+%% GEOMETRIC JACOBIAN (end-effector)
+%% =========================================================================
+function J = jacobian_numeric(q,a,d,alpha)
+
+n = length(q);
+T = eye(4);
+
+O = cell(n+1,1);
+z = cell(n+1,1);
+
+O{1} = [0;0;0];
+z{1} = [0;0;1];
+
+for i=1:n
+    T = T * dh_num(a(i),alpha(i),d(i),q(i));
+    R = T(1:3,1:3);
+    O{i+1} = T(1:3,4);
+    z{i+1} = R*[0;0;1];
+end
+
+Oe = O{n+1};
+
+Jv = zeros(3,n);
+Jw = zeros(3,n);
+
+for j=1:n
+    Jv(:,j) = cross(z{j}, Oe - O{j});
+    Jw(:,j) = z{j};
+end
+
+J = [Jv; Jw];  % 6×n
 end
 
 

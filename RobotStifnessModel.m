@@ -40,7 +40,6 @@ g  = 9.81;                                       % [m/s^2]
 %% =============================================================================
 %% Trajectory (q1..q6)
 %% =============================================================================
-xpos = [ 2.6 2.4 2.2 2.0 1.8 1.6 1.4 1.2 1.0 0.8 ].';
 
 p = [2.6,0,0.2;
 2.4,0,0.2;
@@ -57,8 +56,20 @@ Rot = [0,pi/2,0];                               % [rad]
 xpos = p(:,1);
 
 Angcord = GetAngles(a, d, alpha, p, Rot);
-Angcord(:,2)=-Angcord(:,2)
-Angcord(:,3)=Angcord(:,3)+pi
+%Angcord(:,2)=-Angcord(:,2)
+%Angcord(:,3)=Angcord(:,3)+pi
+
+fprintf("\n=== TCP FK check ===\n");
+for ii=1:size(Angcord,1)
+    T = eye(4);
+    for jj=1:6
+        T = T * dh_num(a(jj), alpha(jj), d(jj), Angcord(ii,jj));
+    end
+    fk = T(1:3,4).';
+    fprintf("i=%d target=[%.3f %.3f %.3f] fk=[%.3f %.3f %.3f]\n", ...
+        ii, p(ii,1),p(ii,2),p(ii,3), fk(1),fk(2),fk(3));
+end
+fprintf("====================\n\n");
 
 n = 6;
 
@@ -608,5 +619,127 @@ end
 J = [Jv; Jw];  % 6×n
 end
 
+function Angcoord = GetAngles(a, d, alpha, p, Rot)
+% IK numérica consistente con dh_num + jacobian_numeric
+% Resuelve posición + orientación constante Rot para cada punto p(i,:)
+
+    P = p;
+    phi = Rot(3); theta = Rot(2); psi = Rot(1);
+
+    % Rotación deseada (tu convención)
+    Rz = [cos(phi),-sin(phi),0; sin(phi),cos(phi),0; 0,0,1];
+    Ry = [cos(theta),0,sin(theta); 0,1,0; -sin(theta),0,cos(theta)];
+    Rx = [1,0,0; 0,cos(psi),-sin(psi); 0,sin(psi),cos(psi)];
+    Rdes = Rz*Ry*Rx;
+
+    N = rows(P);
+    Angcoord = zeros(N,6);
+
+    % Inicial: buena práctica -> arrancar con algo razonable
+    q = zeros(6,1);
+
+    for i=1:N
+        pdes = P(i,:).';
+        [q,info] = ik_dls(q, pdes, Rdes, a, d, alpha);
+
+        Angcoord(i,:) = q.';
+
+        if info.fail
+            printf("WARN IK: point %d not converged. pos_err=%.3e ori_err=%.3e\n", ...
+                i, info.pos_err, info.ori_err);
+        end
+    end
+end
+
+
+function [q,info] = ik_dls(q0, pdes, Rdes, a, d, alpha)
+% Damped Least Squares IK usando Jacobiano geométrico (espacial) de tu DH
+
+    q = q0;
+
+    maxIter = 200;
+    tol_p   = 1e-6;     % [m]
+    tol_o   = 1e-6;     % [rad]
+    lambda  = 1e-2;     % damping
+    stepMax = 0.2;      % [rad] límite por iter (evita saltos)
+
+    fail = false;
+
+    for it=1:maxIter
+        [pfk, Rfk] = fk_pos_rot(q, a, d, alpha);
+
+        ep = pdes - pfk;                 % error de posición (base)
+        % error de orientación: usar log(Rfk' * Rdes) y pasarlo a base
+        Rerr_body = Rfk.' * Rdes;
+        eo_body   = rotvec_from_R(Rerr_body);  % en frame del efector
+        eo        = Rfk * eo_body;             % a frame base (coherente con Jacobiano espacial)
+
+        if norm(ep) < tol_p && norm(eo) < tol_o
+            break;
+        end
+
+        e = [ep; eo];
+
+        J = jacobian_numeric(q, a, d, alpha);   % 6x6 (tu función)
+
+        % DLS: dq = (J'J + λ²I)^-1 J' e
+        dq = (J.'*J + (lambda^2)*eye(6)) \ (J.'*e);
+
+        % limitar paso para estabilidad
+        ndq = norm(dq);
+        if ndq > stepMax
+            dq = dq * (stepMax/ndq);
+        end
+
+        q = q + dq;
+
+        % wrap a [-pi,pi] para evitar drift numérico
+        q = atan2(sin(q), cos(q));
+    end
+
+    [pfk, Rfk] = fk_pos_rot(q, a, d, alpha);
+    ep = pdes - pfk;
+    Rerr_body = Rfk.' * Rdes;
+    eo_body   = rotvec_from_R(Rerr_body);
+    eo        = Rfk * eo_body;
+
+    info.pos_err = norm(ep);
+    info.ori_err = norm(eo);
+    info.fail    = (info.pos_err > 1e-4 || info.ori_err > 1e-4);
+end
+
+
+function [p, R] = fk_pos_rot(q, a, d, alpha)
+% FK consistente con dh_num
+
+    T = eye(4);
+    for j=1:6
+        T = T * dh_num(a(j), alpha(j), d(j), q(j));
+    end
+    p = T(1:3,4);
+    R = T(1:3,1:3);
+end
+
+
+function w = rotvec_from_R(R)
+% Devuelve vector de rotación (axis-angle) equivalente a R
+% estable para ángulos pequeños
+
+    tr = trace(R);
+    c = (tr - 1)/2;
+    c = max(-1, min(1, c));
+    ang = acos(c);
+
+    if ang < 1e-12
+        w = [0;0;0];
+        return;
+    end
+
+    % axis = (1/(2sin(ang))) * vee(R - R')
+    ax = (1/(2*sin(ang))) * [R(3,2)-R(2,3);
+                             R(1,3)-R(3,1);
+                             R(2,1)-R(1,2)];
+    w = ang * ax;
+end
 
 

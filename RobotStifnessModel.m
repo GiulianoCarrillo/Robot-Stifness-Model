@@ -1,6 +1,50 @@
 function RobotStifnessModel()
 
-
+% =========================================================================
+% RobotStifnessModel.m
+%
+% Dynamic stiffness + modal model for a 6-DOF industrial robot along a
+% Cartesian trajectory.
+%
+% Pipeline (high level):
+%   1) Define robot parameters: DH geometry, link COM, masses, inertias,
+%      joint stiffness/damping.
+%   2) Define Cartesian target points p [m] and constant TCP orientation Rot [rad].
+%   3) Inverse kinematics (GetAngles): returns joint angles q [rad] for each target.
+%      - Uses an analytic seed for joints 1–3 (wrist center geometry)
+%      - Refines full 6-DOF solution with numerical IK (damped least squares).
+%   4) Forward-kinematics sanity check: verifies FK(q) ≈ target p.
+%   5) For each posture q:
+%      - D(q): inertia matrix [kg·m²]
+%      - G(q): gravity torque vector [N·m]
+%      - Kg = dG/dq: gravity stiffness (linearization) [N·m/rad]
+%      - Kt = Ks + Kg: total joint stiffness [N·m/rad]
+%      - Undamped eigenproblem: Kt φ = ωn² D φ
+%      - Mode tracking along the path using MAC (modal assurance criterion)
+%      - Damped state-space eigenvalues → ωd and damping ratio ζ
+%      - Dominant mode in Cartesian X/Y via Jacobian-based weighting
+%
+% Units:
+%   - Length: m
+%   - Angle: rad
+%   - Mass: kg
+%   - Inertia: kg·m²
+%   - Joint stiffness Ks: N·m/rad
+%   - Joint damping  Cs: N·m·s/rad
+%   - Natural frequency ω: rad/s   (f = ω / 2π in Hz)
+%   - Cartesian stiffness (modal/static): N/m
+% =========================================================================
+% Key computed outputs (per posture index p):
+%   wn(p,k)      : undamped natural frequencies [rad/s]
+%   wd(p,k)      : damped natural frequencies [rad/s] (from state-space)
+%   zeta(p,k)    : damping ratios [-]
+%   Phi_all{p}   : tracked joint-space mode shapes [6x6] (mass-normalized)
+%   DomModeX/Y   : dominant mode index in Cartesian X / Y [-]
+%   wn_domX/Y    : dominant undamped natural frequency in X / Y [rad/s]
+%   zeta_domX/Y  : damping ratio of the dominant mode in X / Y [-]
+%   k_modal_X/Y  : equivalent Cartesian modal stiffness in X / Y [N/m]
+%   Kx_static/Y  : static Cartesian stiffness check in X / Y [N/m]
+% =========================================================================
 
 clear; clc;
 pkg load control
@@ -9,15 +53,24 @@ pkg load control
 %% ------------------ Parameters -----------------------------------------------
 %% =============================================================================
 
+% Toolw is used as a reference excitation line in the frequency plots.
+
 RPM = 2000;                % [rev/min]
 z_teeth = 4;               % [-] number of teeth
 Toolw = RPM*(2*pi/60)*z_teeth;    % [rad/s] tooth passing frequency
+
+% DH convention (as used by dh_num):
+% T_i = RotZ(theta_i) * TransZ(d_i) * TransX(a_i) * RotX(alpha_i)
+% where theta_i = q(i). All kinematics/dynamics functions below assume this.
+
 
 a     = [0.33 1.15 0.115 0 0 0];             % [m]
 d     = [0.645 0 0 1.22 0 0.24];             % [m]
 alpha = [pi/2 0 pi/2 pi/2 -pi/2 0];         % [rad]
 
-
+% Link center-of-mass offsets in each link frame (DH frame i):
+% r_cm_i = [lc(i); lc_y(i); lc_z(i)] [m]
+% In this dataset only the x-offset is used (lc_y = lc_z = 0).
 
 lc    = [0.35 0.60 0.55 0.15 0.12 0.20];     % [m]
 lc_y  = [0.00 0.00 0.00 0.00 0.00 0.00];     % [m]
@@ -33,6 +86,9 @@ Ixy = [ 0 0 0 0 0 0 ];  % [kg*m^2]
 Ixz = [ 0 0 0 0 0 0 ];  % [kg*m^2]
 Iyz = [ 0 0 0 0 0 0 ];  % [kg*m^2]
 
+% Ks: diagonal joint stiffness matrix (torsional spring at each joint).
+% Cs: diagonal joint viscous damping matrix (linearized joint damping).
+
 Ks = diag([1409800 400760 935280 360000 370000 380000]);    % [N*m/rad]
 Cs = diag([2e1  2e2  2e1  5e1  5e1  2e1 ]);     % [N*m*s/rad]
 g  = 9.81;                                       % [m/s^2]
@@ -40,6 +96,10 @@ g  = 9.81;                                       % [m/s^2]
 %% =============================================================================
 %% Trajectory (q1..q6)
 %% =============================================================================
+
+% Trajectory definition:
+%   p(i,:) = [x y z] target TCP position in base frame [m].
+%   Here y is kept at 0 and z at 0.2 m, while x is swept from 2.6 → 1.0 m.
 
 p = [2.6,0,0.2;
 2.4,0,0.2;
@@ -53,6 +113,10 @@ p = [2.6,0,0.2;
 
 p_traj = p;
 
+% --- Orientation convention used in this project ---
+% Rot = [psi, theta, phi] = [Rx, Ry, Rz] in radians (roll, pitch, yaw).
+% The TCP rotation matrix is built as: R = Rz(phi) * Ry(theta) * Rx(psi)  (ZYX order).
+
 Rot = [0,pi/2,0];
 
 
@@ -61,8 +125,11 @@ Rot = [0,pi/2,0];
 xpos = p(:,1);
 
 Angcord = GetAngles(a, d, alpha, p, Rot);
-%Angcord(:,2)=-Angcord(:,2)
-%Angcord(:,3)=Angcord(:,3)+pi
+
+% Forward kinematics check:
+%   For each IK solution Angcord(i,:), compute FK via dh_num and compare
+%   with the requested target position p(i,:). This is the quickest way to
+%   detect convention mismatches (DH / tool offset / orientation).
 
 fprintf("\n=== TCP FK check ===\n");
 for ii=1:size(Angcord,1)
@@ -81,6 +148,7 @@ n = 6;
 %% =========================================================================
 %% Modal analysis
 %% =========================================================================
+
 N = size(Angcord,1);
 
 wn   = zeros(N,n);   % [rad/s]
@@ -117,6 +185,16 @@ Ky_static = zeros(N,1);
 
 for p = 1:N
 
+% =====================================================================
+% Per-posture loop
+%   For each joint configuration q0 = Angcord(p,:), we build the joint-space
+%   dynamic model and extract modal parameters.
+%
+%   Kt = Ks + Kg includes gravity stiffness (linearization of gravity torque).
+%   Undamped modes come from:  Kt * phi = wn^2 * D * phi
+%   where D is the inertia matrix.
+% =====================================================================
+
     q0 = Angcord(p,:).';
 
     % --- Inertia matrix (numeric, exact) ---
@@ -135,6 +213,11 @@ for p = 1:N
     Kt = Ks + Kg;
 
     % --- Undamped modal problem (eig + mode tracking with MAC) ---
+
+    % Generalized eigenvalue problem:
+    % eig(Kt, D) returns eigenvectors phi and eigenvalues W2 = wn^2.
+    % The mode shapes are then mass-normalized using D for MAC tracking.
+
     [phi, W2] = eig(Kt, D);
     wn_tmp = sqrt(real(diag(W2)));   % n×1
 
@@ -190,6 +273,12 @@ for p = 1:N
     % ============================
     Z = zeros(n);
     I = eye(n);
+
+    % Damped second-order system (joint space):
+    %   D*qdd + Cs*qd + Kt*q = 0
+    % Written in state-space with x = [q; qd]:
+    %   xdot = A*x  where
+    %   A = [0 I; -D\Kt  -D\Cs]
 
     A = [ Z         I ;
          -D\Kt    -D\Cs ];
@@ -494,6 +583,13 @@ title('Static stiffness check');
 grid on;
 
 end
+
+% ========================================================================
+% Local functions
+%   The following helper functions implement kinematics and dynamics and
+%   are written to be consistent with the DH transform dh_num().
+% ========================================================================
+
 
 %% =========================================================================
 %% NUMERIC INERTIA MATRIX

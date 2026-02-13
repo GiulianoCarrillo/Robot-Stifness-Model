@@ -37,7 +37,10 @@ ox = P(i,1); oy = P(i,2); oz = P(i,3);
 #------------STEP 0: Calculate wrist center position----------------------------
 #-------------------------------------------------------------------------------
 
-xc = ox-di(6)*R(1,3); yc = oy - di(6)*R(2,3); zc = oz - di(6)*R(3,3);
+pw = [ox; oy; oz] - R * [0; 0; di(6)];
+xc = pw(1);
+yc = pw(2);
+zc = pw(3);
 Pc(i,1) = xc; Pc(i,2) = yc; Pc(i,3) = zc;
 
 #-------------------------------------------------------------------------------
@@ -67,63 +70,67 @@ Q(i,1) = q1; Q(i,2) = q2; Q(i,3) = q3;
 #-------------------------STEP 2: Evaluate matrix R03---------------------------
 #-------------------------------------------------------------------------------
 
-A1 = [cos(q1), 0, sin(q1); sin(q1), 0, -cos(q1); 0, 1, 0,];
-A2 = [cos(q2), -sin(q2), 0; sin(q2), cos(q2), 0; 0, 0, 1];
-A3 = [cos(q3), 0, sin(q3); sin(q3), 0, -cos(q3); 0, 1, 0];
+#-------------------------------------------------------------------------------
+#-------------------------STEP 2: Evaluate matrix R03 (DH-consistent)-----------
+#-------------------------------------------------------------------------------
 
-r03 = A1*A2*A3;
-r03T = transpose(r03);
-R36 = r03T; #Right hand side of equation should be: (R03)^T*R, but something is wrong here.
+T03 = dh_num(ai(1), alphi(1), di(1), q1) * ...
+      dh_num(ai(2), alphi(2), di(2), q2) * ...
+      dh_num(ai(3), alphi(3), di(3), q3);
+
+R03  = T03(1:3,1:3);
+R36  = R03' * R;   % <-- ESTA es la ecuación correcta
 
 #-------------------------------------------------------------------------------
-#----------------STEP 3: Solve R36 = (R03)^T*R (similar to euler angles)--------
+#----------------STEP 3: Solve wrist angles from R36----------------------------
 #-------------------------------------------------------------------------------
-# In this case we need to define the ranges of q4, q5 and q6:
-eps = 1e-6;
-cond1 = (abs(R36(1,3)) > eps);
-cond2 = (abs(R36(2,3)) > eps);
 
-# a) IF not BOTH R36(1,3) and R36(2,3) are 0 => sin(q5) neq 0
-  if or(cond1, cond2)
-      q5(1,1) = atan2(sqrt(R36(1,3)^2+R36(2,3)^2),-R36(3,3));
-      q4(1,1) = atan2(R36(2,3),R36(1,3));
-      q5(1,1) = atan2(-sqrt(R36(1,3)^2+R36(2,3)^2),-R36(3,3));
-      q6(1,1) = atan2(-R36(3,2),R36(3,1));
-      q4(1,2) = q4(1,1)+pi;
-      q5(1,2) = atan2(sqrt(1-R36(3,3)^2),-R36(3,3));
-      q6(1,2) = q6(1,1)+pi;
+eps = 1e-9;
+s = sqrt(R36(1,3)^2 + R36(2,3)^2);
 
-      %Always choose q4 = q6 = 0 or 2pi (and not pi/-pi) and make sure -125 < q5 < 125
-      checkq4 = (abs( abs(q4)-pi ) > 0.1);
-      checkq5 = (abs(q5) < 125*pi/180);
-      if checkq5
-        id = find(checkq4);
-        Q(i,4) = q4(1,id); Q(i,5) = q5(1,id); Q(i,6) = q6(1,id);
-      else
-        point = ["p" num2str(i)];
-        printf("For point %d, q5 = %d or %d rad is out of range\n", [i,q5]);
-        Q(i,:) = [];
-      end
+if s > eps
+    % Two solutions for the wrist (q5 positive/negative)
+    q4a = atan2(R36(2,3), R36(1,3));
+    q5a = atan2( s, -R36(3,3));
+    q6a = atan2(-R36(3,2), R36(3,1));
 
-  # b) IF R36(1,3) = R36(2,3) = 0 => R(3,3) = cos(5)= +/- 1
-  else
-      # If R36(3,3) = -1 => cos(q5) = 1 and sin(q5) = 0:
-    if R36(3,3) = 1
-      q5 = 0;
-      q4 = 0; #This can have infinitely many values - convention to choose =0
-      q6 = atan2(R36(2,1),R36(1,1))
+    q4b = q4a + pi;
+    q5b = atan2(-s, -R36(3,3));
+    q6b = q6a + pi;
 
-      Q(i,4) = q4; Q(i,5) = q5; Q(i,6) = q6;
+    % Choose one solution (keep your criteria, but now consistent)
+    cand = [q4a q5a q6a;
+            q4b q5b q6b];
 
-      # If R36(3,3) = 1 => cos(q5) = -1 and sin(q5) = 0:
-    elseif R36(3,3) = -1
-      q5 = pi;
-      q4 = 0; #This can have infinitely many values - convention to choose =0
-      q6 = -atan2(R36(2,1),R36(1,1))
+    % example criterion: keep |q5| < 125deg and avoid q4 near +-pi if possible
+    ok = (abs(cand(:,2)) < 125*pi/180);
 
-      Q(i,4) = q4; Q(i,5) = q5; Q(i,6) = q6;
+    if any(ok)
+        % if both ok, pick the one with q4 farthest from +-pi
+        idx_ok = find(ok);
+        [~,best] = max(abs(abs(cand(idx_ok,1)) - pi));
+        pick = idx_ok(best);
+        Q(i,4) = cand(pick,1);
+        Q(i,5) = cand(pick,2);
+        Q(i,6) = cand(pick,3);
+    else
+        printf("Point %d: wrist solutions out of q5 range\n", i);
+        Q(i,4:6) = [NaN NaN NaN];
     end
 
+else
+    % Singularity: q5 ~ 0 or pi
+    if R36(3,3) > 0
+        q5 = 0;
+        q4 = 0;
+        q6 = atan2(R36(2,1), R36(1,1));
+    else
+        q5 = pi;
+        q4 = 0;
+        q6 = -atan2(R36(2,1), R36(1,1));
+    end
+    Q(i,4) = q4; Q(i,5) = q5; Q(i,6) = q6;
+end
   end
 
 end

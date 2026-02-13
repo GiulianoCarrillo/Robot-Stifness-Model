@@ -51,7 +51,12 @@ p = [2.6,0,0.2;
 1.2,0,0.2;
 1.0,0,0.2];   %[m]
 
-Rot = [0,pi/2,0];                               % [rad]
+p_traj = p;
+
+Rot = [0,pi/2,0];
+
+
+%% =============================================================================
 
 xpos = p(:,1);
 
@@ -284,6 +289,45 @@ k_modal_Y(p) = wn_domY(p)^2 / (PhiY(idxY)^2);
     end
 
 end
+
+
+% =========================================================================
+% ==== SLD OUTPUT: save/extrct each value per position =========
+% =========================================================================
+
+SLD = struct();
+
+% trayectoria y eje de barrido
+SLD.p_xyz   = p_traj;     % [N x 3]
+SLD.xpos    = xpos;       % [N x 1]
+
+% modos dominantes
+SLD.DomModeX = DomModeX;  % [N x 1]
+SLD.DomModeY = DomModeY;  % [N x 1]
+
+% frecuencias dominantes (rad/s) y también en Hz
+SLD.wn_domX_rad = wn_domX;                 % [N x 1]
+SLD.wn_domY_rad = wn_domY;                 % [N x 1]
+SLD.fn_domX_Hz  = wn_domX/(2*pi);          % [N x 1]
+SLD.fn_domY_Hz  = wn_domY/(2*pi);          % [N x 1]
+
+% amortiguamiento dominante
+SLD.zeta_domX = zeta_domX;  % [N x 1]
+SLD.zeta_domY = zeta_domY;  % [N x 1]
+
+% rigidez modal equivalente cartesiana
+SLD.k_modal_X = k_modal_X;  % [N x 1]  (N/m)
+SLD.k_modal_Y = k_modal_Y;  % [N x 1]  (N/m)
+
+% opcional: chequeo de rigidez estática
+SLD.Kx_static = Kx_static;  % [N x 1]
+SLD.Ky_static = Ky_static;  % [N x 1]
+
+% 1) Dejarlo disponible en Workspace aunque esto sea una función:
+assignin('base','SLD',SLD);
+
+% 2) Guardarlo a disco (MAT):
+save(fullfile(tempdir(),'SLD_results.mat'),'SLD');
 
 
 %% =========================================================================
@@ -620,13 +664,13 @@ J = [Jv; Jw];  % 6×n
 end
 
 function Angcoord = GetAngles(a, d, alpha, p, Rot)
-% IK numérica consistente con dh_num + jacobian_numeric
-% Resuelve posición + orientación constante Rot para cada punto p(i,:)
+% IK numéric consistent with dh_num + jacobian_numeric
+%solve position + constant orientation for Rot for each point p(i,:)
 
     P = p;
     phi = Rot(3); theta = Rot(2); psi = Rot(1);
 
-    % Rotación deseada (tu convención)
+    % wished rotation (tu convención)
     Rz = [cos(phi),-sin(phi),0; sin(phi),cos(phi),0; 0,0,1];
     Ry = [cos(theta),0,sin(theta); 0,1,0; -sin(theta),0,cos(theta)];
     Rx = [1,0,0; 0,cos(psi),-sin(psi); 0,sin(psi),cos(psi)];
@@ -635,7 +679,7 @@ function Angcoord = GetAngles(a, d, alpha, p, Rot)
     N = rows(P);
     Angcoord = zeros(N,6);
 
-    % Inicial: buena práctica -> arrancar con algo razonable
+
     q = zeros(6,1);
 
     for i=1:N
@@ -668,11 +712,11 @@ function [q,info] = ik_dls(q0, pdes, Rdes, a, d, alpha)
     for it=1:maxIter
         [pfk, Rfk] = fk_pos_rot(q, a, d, alpha);
 
-        ep = pdes - pfk;                 % error de posición (base)
-        % error de orientación: usar log(Rfk' * Rdes) y pasarlo a base
+        ep = pdes - pfk;                 % position error (base)
+        % orientation error when usign log(Rfk' * Rdes) and transfer to base
         Rerr_body = Rfk.' * Rdes;
-        eo_body   = rotvec_from_R(Rerr_body);  % en frame del efector
-        eo        = Rfk * eo_body;             % a frame base (coherente con Jacobiano espacial)
+        eo_body   = rotvec_from_R(Rerr_body);  % in end effector frame
+        eo        = Rfk * eo_body;             % to base frame (coherente con Jacobiano espacial)
 
         if norm(ep) < tol_p && norm(eo) < tol_o
             break;
@@ -685,7 +729,7 @@ function [q,info] = ik_dls(q0, pdes, Rdes, a, d, alpha)
         % DLS: dq = (J'J + λ²I)^-1 J' e
         dq = (J.'*J + (lambda^2)*eye(6)) \ (J.'*e);
 
-        % limitar paso para estabilidad
+        % limit for stability
         ndq = norm(dq);
         if ndq > stepMax
             dq = dq * (stepMax/ndq);
@@ -693,7 +737,7 @@ function [q,info] = ik_dls(q0, pdes, Rdes, a, d, alpha)
 
         q = q + dq;
 
-        % wrap a [-pi,pi] para evitar drift numérico
+        % wrap a [-pi,pi] to avoid problem with certain configuration
         q = atan2(sin(q), cos(q));
     end
 
@@ -710,7 +754,7 @@ end
 
 
 function [p, R] = fk_pos_rot(q, a, d, alpha)
-% FK consistente con dh_num
+% FK consistent with dh_num
 
     T = eye(4);
     for j=1:6
@@ -722,8 +766,8 @@ end
 
 
 function w = rotvec_from_R(R)
-% Devuelve vector de rotación (axis-angle) equivalente a R
-% estable para ángulos pequeños
+% Return rotation vector
+% stable for small angles
 
     tr = trace(R);
     c = (tr - 1)/2;

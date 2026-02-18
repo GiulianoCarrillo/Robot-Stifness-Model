@@ -117,7 +117,7 @@ p_traj = p;
 % Rot = [psi, theta, phi] = [Rx, Ry, Rz] in radians (roll, pitch, yaw).
 % The TCP rotation matrix is built as: R = Rz(phi) * Ry(theta) * Rx(psi)  (ZYX order).
 
-Rot = [0,pi/2,0];
+Rot = [0,pi/2,-pi/2];
 
 
 %% =============================================================================
@@ -182,6 +182,22 @@ Pgrav    = zeros(N,1);
 Kg_sens  = zeros(N,1);  % simple sensitivity metric
 Kx_static = zeros(N,1);
 Ky_static = zeros(N,1);
+
+% === Modal constants at TCP for SLD (per posture, per mode) ===
+PhiX_all = zeros(N,n);   % b_x = (Jv*phi)_x
+PhiY_all = zeros(N,n);   % b_y = (Jv*phi)_y
+
+uX = zeros(N,n);         % u_xj = b_xj^2  (units ~ 1/kg)
+uY = zeros(N,n);         % u_yj = b_yj^2
+
+uXY = zeros(N,n);        % cross term b_xj*b_yj (useful if someone wants Gxy)
+
+k_eq_X = zeros(N,n);     % k_xj = wn^2 / u_xj  [N/m]
+k_eq_Y = zeros(N,n);     % k_yj = wn^2 / u_yj  [N/m]
+
+c_eq_X = zeros(N,n);     % c_xj = 2*zeta*wn / u_xj [N*s/m]
+c_eq_Y = zeros(N,n);     % c_yj = 2*zeta*wn / u_yj [N*s/m]
+
 
 for p = 1:N
 
@@ -299,28 +315,47 @@ lam_sel = lam_sel(:).';
 wd(p,:)   = abs(imag(lam_sel));  % [rad/s]
 zeta(p,:) = -real(lam_sel) ./ sqrt(real(lam_sel).^2 + imag(lam_sel).^2); % [-]
 zeta(p,:) = max(0, min(zeta(p,:), 0.99));
-% =========================================================
-% Dominant modal parameters for SLD (X and Y directions)
-% =========================================================
 
+% =========================================================
+% Modal constants at TCP for SLD (X/Y) + dominant indices (optional)
+% =========================================================
 J = jacobian_numeric(q0,a,d,alpha);
 Jv = J(1:3,:);
 
-PhiX = zeros(1,n);
-PhiY = zeros(1,n);
-WeightX = zeros(1,n);
-WeightY = zeros(1,n);
+% b = Jv * phi  (3x6).  With phi mass-normalized (phi'*D*phi = I),
+% the collocated receptance in X/Y is:
+% Gxx(ω) = Σ b_xj^2 / (wn_j^2 - ω^2 + 2i zeta_j wn_j ω)
+% Gyy(ω) = Σ b_yj^2 / (wn_j^2 - ω^2 + 2i zeta_j wn_j ω)
 
-for k = 1:n
-    phi_k = phi(:,k);
-    v_cart = Jv * phi_k;
+B = Jv * phi;              % 3x6
+PhiX = B(1,:);             % 1x6  (b_xj)
+PhiY = B(2,:);             % 1x6  (b_yj)
 
-    PhiX(k) = v_cart(1);
-    PhiY(k) = v_cart(2);
+PhiX_all(p,:) = PhiX;
+PhiY_all(p,:) = PhiY;
 
-    WeightX(k) = (PhiX(k)^2) / (wn_tmp(k)^2);
-    WeightY(k) = (PhiY(k)^2) / (wn_tmp(k)^2);
-end
+% Modal constants for collocated FRFs
+uX(p,:)  = PhiX.^2;         % u_xj = b_xj^2
+uY(p,:)  = PhiY.^2;         % u_yj = b_yj^2
+uXY(p,:) = PhiX.*PhiY;      % cross term if needed (Gxy)
+
+% Avoid division by zero
+epsu = 1e-18;
+uX(p,:) = max(uX(p,:), epsu);
+uY(p,:) = max(uY(p,:), epsu);
+
+% Equivalent (per-mode) stiffness and damping in X/Y (handy to export)
+wn_row = wn_tmp(:).';       % 1x6
+z_row  = zeta(p,:);         % 1x6
+
+k_eq_X(p,:) = (wn_row.^2) ./ uX(p,:);              % [N/m]
+k_eq_Y(p,:) = (wn_row.^2) ./ uY(p,:);              % [N/m]
+c_eq_X(p,:) = (2*z_row.*wn_row) ./ uX(p,:);        % [N*s/m]
+c_eq_Y(p,:) = (2*z_row.*wn_row) ./ uY(p,:);        % [N*s/m]
+
+% Optional: "dominant" by static-compliance contribution (NOT a SLD rule)
+WeightX = uX(p,:) ./ (wn_row.^2);
+WeightY = uY(p,:) ./ (wn_row.^2);
 
 [~, idxX] = max(WeightX);
 [~, idxY] = max(WeightY);
@@ -328,14 +363,14 @@ end
 DomModeX(p) = idxX;
 DomModeY(p) = idxY;
 
-wn_domX(p) = wn_tmp(idxX);
-wn_domY(p) = wn_tmp(idxY);
+wn_domX(p) = wn_row(idxX);
+wn_domY(p) = wn_row(idxY);
 
-zeta_domX(p) = zeta(p,idxX);
-zeta_domY(p) = zeta(p,idxY);
+zeta_domX(p) = z_row(idxX);
+zeta_domY(p) = z_row(idxY);
 
-k_modal_X(p) = wn_domX(p)^2 / (PhiX(idxX)^2);
-k_modal_Y(p) = wn_domY(p)^2 / (PhiY(idxY)^2);
+k_modal_X(p) = k_eq_X(p, idxX);
+k_modal_Y(p) = k_eq_Y(p, idxY);
 
 
 
@@ -417,6 +452,58 @@ assignin('base','SLD',SLD);
 
 % 2) Guardarlo a disco (MAT):
 save(fullfile(tempdir(),'SLD_results.mat'),'SLD');
+
+% =========================================================================
+% EXPORT for colleague (SLD): ONE ROW = (posture, mode)
+% Use ';' delimiter so Excel (ES locale) doesn't break decimals
+% =========================================================================
+
+outDir = tempdir();
+
+% -------- (A) Long table: posture+mode (recommended for SLD code) --------
+outCsvLong = fullfile(outDir, 'SLD_modes_long.csv');
+fid = fopen(outCsvLong, 'w');
+
+fprintf(fid, ['xpos_m;px_m;py_m;pz_m;mode;', ...
+              'wn_rad_s;wd_rad_s;zeta;', ...
+              'bX; bY; uX_1_kg; uY_1_kg; uXY_1_kg;', ...
+              'kX_N_m;kY_N_m;cX_Ns_m;cY_Ns_m\n']);
+
+for i = 1:N
+    for k = 1:n
+        fprintf(fid, ['%.12g;%.12g;%.12g;%.12g;%d;', ...
+                      '%.12g;%.12g;%.12g;', ...
+                      '%.12g;%.12g;%.12g;%.12g;%.12g;', ...
+                      '%.12g;%.12g;%.12g;%.12g\n'], ...
+            xpos(i), p_traj(i,1), p_traj(i,2), p_traj(i,3), k, ...
+            wn(i,k), wd(i,k), zeta(i,k), ...
+            PhiX_all(i,k), PhiY_all(i,k), uX(i,k), uY(i,k), uXY(i,k), ...
+            k_eq_X(i,k), k_eq_Y(i,k), c_eq_X(i,k), c_eq_Y(i,k));
+    end
+end
+
+fclose(fid);
+fprintf('Saved (SLD long table): %s\n', outCsvLong);
+
+% -------- (B) Summary table: dominant X/Y per posture (for your report) --------
+outCsvSummary = fullfile(outDir, 'SLD_summary_XY.csv');
+fid = fopen(outCsvSummary, 'w');
+
+fprintf(fid, ['xpos_m;px_m;py_m;pz_m;', ...
+              'DomModeX;wnX_rad_s;zetaX;kX_N_m;', ...
+              'DomModeY;wnY_rad_s;zetaY;kY_N_m\n']);
+
+for i = 1:N
+    fprintf(fid, ['%.12g;%.12g;%.12g;%.12g;', ...
+                  '%d;%.12g;%.12g;%.12g;', ...
+                  '%d;%.12g;%.12g;%.12g\n'], ...
+        xpos(i), p_traj(i,1), p_traj(i,2), p_traj(i,3), ...
+        DomModeX(i), wn_domX(i), zeta_domX(i), k_modal_X(i), ...
+        DomModeY(i), wn_domY(i), zeta_domY(i), k_modal_Y(i));
+end
+
+fclose(fid);
+fprintf('Saved (summary): %s\n', outCsvSummary);
 
 
 %% =========================================================================
@@ -881,5 +968,6 @@ function w = rotvec_from_R(R)
                              R(2,1)-R(1,2)];
     w = ang * ax;
 end
+
 
 

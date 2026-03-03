@@ -1,3 +1,4 @@
+
 function two_link_free_vibrationsy()
 pkg load symbolic
 clear; clc;
@@ -24,36 +25,27 @@ q1_min = 0;  q1_max = 180;             % joint limits
 q2_min = -180; q2_max = 350;
 
 
-
-lc1 = 0.196;      % [m] COM link 1 from joint 1
-lc2 = 0.176;      % [m] COM link 2 from joint 2
-
-%q1 = deg2rad(20) ; % (Angle of first joint)
-%q2 = deg2rad(30) ; % (Angle of second joint)
+lc1 = 0.189;      % [m] COM link 1 from joint 1
+lc2 = 0.170;      % [m] COM link 2 from joint 2
 
 % Mass & inertia about COM (z out of plane)
-%m1 = 2.845;        % [kg]
-%m2 = 2.774;        % [kg]
 
 m1 = 5.639;        % [kg]
-m2 = 2.774;        % [kg]
+m2 = 2.689;        % [kg]
 
-%Iz1 = 0.073;      % [kg m^2] Inertia IZ taken on the reference system with origin in the CM of the link.
-%Iz2 = 0.03460;      % [kg m^2] Inertia IZ taken on the reference system with origin in the CM of the link.
-
-Iz1 = 0.0563;      % [kg m^2] Inertia IZ taken on the reference system with origin in the CM of the link.
-Iz2 = 0.0147;      % [kg m^2] Inertia IZ taken on the reference system with origin in the CM of the link.
+Iz1 = 0.0762;      % [kg m^2] Inertia IZ taken on the reference system with origin in the CM of the link.
+Iz2 = 0.0347;      % [kg m^2] Inertia IZ taken on the reference system with origin in the CM of the link.
 
 % Gravity
 g  = 9.81;       % [m/s^2]
 
 % Torsional springs (potential Energy: 0.5*(q - q0)'*Ks*(q - q0)).
-k1 = 150;      % [N·m/rad]
-k2 = 1100;      % [N·m/rad]
+k1 = 1402;      % [N·m/rad]
+k2 = 553;      % [N·m/rad]
 
 % Viscous damping.
-c1 = 20 ;       % [N·m·s/rad]; set >0 if we want damping
-c2 = 20;       % [N·m·s/rad]; set >0 if we want damping
+c1 = 0,01 ;       % [N·m·s/rad]; set >0 if we want damping
+c2 = 0,01;       % [N·m·s/rad]; set >0 if we want damping
 
 %% =============================================================================
 %% ------------------ Evaluation -----------------------------------------------
@@ -62,10 +54,6 @@ c2 = 20;       % [N·m·s/rad]; set >0 if we want damping
 [Angcord] = joint_calculator(l1,l2,p0,path,dp,q1_min,q2_min,q1_max,q2_max)
 [Cs,Ks,D,Cc,G,kg] = Dynamic_Model();
 
-%% =============================================================================
-%% =============================================================================
-%% ------------------ Functions -----------------------------------------------
-%% =============================================================================
 
 %% =============================================================================
 %% 2R PLANAR ARM - Linearization.
